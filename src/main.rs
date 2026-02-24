@@ -191,12 +191,102 @@ fn handle_get(stream: &mut TcpStream, req: &httparse::Request) -> io::Result<()>
     }
 }
 
-fn handle_connect(stream: &mut TcpStream, _req: &httparse::Request) -> io::Result<()> {
-    let response = "HTTP/1.1 200 Connection Established\r\n\r\n";
-    match stream.write_all(response.as_bytes()) {
-        Ok(_) => Ok(()),
+fn handle_connect(stream: &mut TcpStream, req: &httparse::Request) -> io::Result<()> {
+    // Determine target (CONNECT uses "host:port" in the path)
+    let target = if let Some(path) = req.path {
+        if !path.is_empty() {
+            path.to_string()
+        } else {
+            // fallback to Host header
+            match req.headers.iter().find(|h| h.name.eq_ignore_ascii_case("Host")).and_then(|h| std::str::from_utf8(h.value).ok()) {
+                Some(h) => h.to_string(),
+                None => {
+                    let response = "HTTP/1.1 400 Bad Request\r\n\r\nMissing target for CONNECT";
+                    let _ = stream.write_all(response.as_bytes());
+                    return Ok(());
+                }
+            }
+        }
+    } else {
+        match req.headers.iter().find(|h| h.name.eq_ignore_ascii_case("Host")).and_then(|h| std::str::from_utf8(h.value).ok()) {
+            Some(h) => h.to_string(),
+            None => {
+                let response = "HTTP/1.1 400 Bad Request\r\n\r\nMissing target for CONNECT";
+                let _ = stream.write_all(response.as_bytes());
+                return Ok(());
+            }
+        }
+    };
+
+    // Connect to the target (expect host:port)
+    match TcpStream::connect(&target) {
+        Ok(remote) => {
+            // Reply to client that connection is established
+            let response = "HTTP/1.1 200 Connection Established\r\n\r\n";
+            if let Err(e) = stream.write_all(response.as_bytes()) {
+                warn!("Failed to write CONNECT response: {}", e);
+                return Err(e);
+            }
+
+            // Clone streams so we can shuttle data in two threads
+            let client_to_remote = match stream.try_clone() {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("Failed to clone client stream: {}", e);
+                    return Err(e);
+                }
+            };
+            let client_to_remote2 = match stream.try_clone() {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("Failed to clone client stream: {}", e);
+                    return Err(e);
+                }
+            };
+
+            let remote_clone1 = match remote.try_clone() {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("Failed to clone remote stream: {}", e);
+                    return Err(e);
+                }
+            };
+            let remote_clone2 = match remote.try_clone() {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("Failed to clone remote stream: {}", e);
+                    return Err(e);
+                }
+            };
+
+            // Spawn thread to copy client -> remote
+            let t1 = std::thread::spawn(move || {
+                let mut r = remote_clone1;
+                let mut c = client_to_remote;
+                let res = io::copy(&mut c, &mut r);
+                let _ = r.shutdown(std::net::Shutdown::Write);
+                res
+            });
+
+            // Spawn thread to copy remote -> client
+            let t2 = std::thread::spawn(move || {
+                let mut r = remote_clone2;
+                let mut c = client_to_remote2;
+                let res = io::copy(&mut r, &mut c);
+                let _ = c.shutdown(std::net::Shutdown::Write);
+                res
+            });
+
+            // Wait for both directions to finish
+            let _ = t1.join();
+            let _ = t2.join();
+
+            Ok(())
+        }
         Err(e) => {
-            warn!("Failed to write response: {}", e);
+            warn!("Failed to connect to CONNECT target {}: {}", target, e);
+            let response = "HTTP/1.1 502 Bad Gateway\r\n\r\nBad Gateway";
+            let _ = stream.write_all(response.as_bytes());
             Err(e)
         }
     }
@@ -207,7 +297,7 @@ mod tests {
     use super::*;   
 
     #[test]
-    fn test_start() {
+    fn test_http() {
         let handle = std::thread::spawn(move || {
             start();
         });
@@ -232,6 +322,39 @@ mod tests {
         assert!(combined.contains("HTTP/1.1 301") || combined.contains("HTTP/1.0 301"), "did not see 301 response: {}", combined);
         assert!(combined.contains("Location: https://github.com/jamesmoriarty"), "did not see Location header: {}", combined);
         assert!(combined.to_lowercase().contains("connection: close"), "did not see connection: close: {}", combined);
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_https() {
+        let handle = std::thread::spawn(move || {
+            start();
+        });
+
+        // Give server a moment to bind
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Run curl as a proxy client for HTTPS and capture verbose output
+        let output = std::process::Command::new("curl")
+            .arg("-x")
+            .arg("127.0.0.1:8080")
+            .arg("https://github.com/jamesmoriarty")
+            .arg("-v")
+            .arg("-o")
+            .arg("/dev/null")
+            .output()
+            .expect("failed to execute curl");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{}{}", stdout, stderr);
+
+        assert!(combined.contains("Connected to 127.0.0.1"), "did not see expected connection line: {}", combined);
+        assert!(combined.contains("> CONNECT github.com:443 HTTP/1.1") || combined.contains("CONNECT github.com:443 HTTP/1.1"), "did not see CONNECT request line: {}", combined);
+        assert!(combined.contains("HTTP/1.1 200 Connection Established") || combined.contains("HTTP/1.1 200") , "did not see 200 Connection Established: {}", combined);
+        assert!(combined.contains("HTTP/2 200") || combined.contains("HTTP/1.1 200"), "did not see inner HTTP 200 response: {}", combined);
+        assert!(combined.to_lowercase().contains("ssl connection") || combined.to_lowercase().contains("tls handshake") || combined.to_lowercase().contains("alpn"), "did not see TLS handshake/ALPN info: {}", combined);
 
         handle.join().unwrap();
     }
