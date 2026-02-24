@@ -2,6 +2,7 @@ use std::{
     net::{TcpListener, TcpStream},
     io,
     io::{Read, Write},
+    env,
 };
 use log::{info, trace, warn, debug};
 
@@ -10,14 +11,20 @@ fn main() {
     start();
 }
 
+fn get_bind_address() -> String {
+    env::var("ROXY_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string())
+}
+
 fn start() {
-    match TcpListener::bind("127.0.0.1:8080") {
+    let bind_addr = get_bind_address();
+    info!("Starting proxy server on {}", bind_addr);
+    match TcpListener::bind(&bind_addr) {
         Ok(l) => {
             l.set_nonblocking(false).unwrap();
             run(l)
         },
         Err(e) => {
-            warn!("Failed to bind to address: {}", e);
+            warn!("Failed to bind to address {}: {}", bind_addr, e);
         }
     };
 }
