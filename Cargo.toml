@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 httparse = "1.10.1"
+clap = { version = "4", features = ["derive", "env"] }
 
 # Tracing
 tracing = "0.1"

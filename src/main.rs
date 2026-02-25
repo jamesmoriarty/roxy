@@ -4,6 +4,7 @@ use std::{
     io::{Read, Write},
     env,
 };
+use clap::Parser;
 use tracing::info_span;
 use opentelemetry::KeyValue;
 use opentelemetry::trace::TracerProvider as _;
@@ -49,20 +50,24 @@ fn init_tracing() -> TracerProvider {
     provider
 }
 
+#[derive(Parser)]
+#[command(about = "A fast HTTP/HTTPS proxy server")]
+struct Args {
+    /// Address to listen on (host:port)
+    #[arg(long, default_value = "127.0.0.1:8080", env = "ROXY_BIND")]
+    bind: String,
+}
+
 fn main() {
+    let args = Args::parse();
     let _provider = init_tracing();
-    start();
+    start(&args.bind);
     opentelemetry::global::shutdown_tracer_provider();
 }
 
-fn get_bind_address() -> String {
-    env::var("ROXY_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string())
-}
-
-fn start() {
-    let bind_addr = get_bind_address();
+fn start(bind_addr: &str) {
     tracing::info!(bind_addr, "starting proxy server");
-    match TcpListener::bind(&bind_addr) {
+    match TcpListener::bind(bind_addr) {
         Ok(l) => {
             l.set_nonblocking(false).unwrap();
             run(l)
@@ -308,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_http() {
-        let handle = std::thread::spawn(move || { start(); });
+        let handle = std::thread::spawn(move || { start("127.0.0.1:8080"); });
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         let output = std::process::Command::new("curl")
@@ -325,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_https() {
-        let handle = std::thread::spawn(move || { start(); });
+        let handle = std::thread::spawn(move || { start("127.0.0.1:8080"); });
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         let output = std::process::Command::new("curl")

@@ -6,7 +6,7 @@ A fast, lightweight HTTP/HTTPS proxy server written in Rust.
 
 - **HTTP Proxying**: Supports HTTP requests with automatic Host header resolution
 - **HTTPS Tunneling**: Implements the CONNECT method for HTTPS tunneling
-- **Configuration**: Bind address configurable via environment variables
+- **Configuration**: Bind address configurable via `--bind` CLI flag or environment variable
 - **Tracing**: OpenTelemetry tracing with OTLP export (Jaeger, Tempo, etc.)
 
 ## Building
@@ -25,7 +25,13 @@ cargo run
 
 ### Configuration
 
-Configure the bind address using the `ROXY_BIND` environment variable:
+Configure the bind address using the `--bind` flag:
+
+```bash
+cargo run -- --bind 0.0.0.0:3128
+```
+
+Or via the `ROXY_BIND` environment variable:
 
 ```bash
 ROXY_BIND=0.0.0.0:3128 cargo run
@@ -34,7 +40,7 @@ ROXY_BIND=0.0.0.0:3128 cargo run
 Or after building:
 
 ```bash
-ROXY_BIND=127.0.0.1:9090 ./target/release/roxy
+./target/release/roxy --bind 127.0.0.1:9090
 ```
 
 ### Logging
@@ -106,6 +112,7 @@ Tests verify both HTTP and HTTPS proxying functionality.
 ## Dependencies
 
 - `httparse` - HTTP request parser
+- `clap` - CLI argument parsing
 - `tracing` / `tracing-subscriber` - Structured logging and tracing
 - `tracing-opentelemetry` - Bridge between tracing and OpenTelemetry
 - `opentelemetry` / `opentelemetry_sdk` - OpenTelemetry SDK
