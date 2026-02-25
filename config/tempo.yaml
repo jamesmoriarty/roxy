@@ -1,0 +1,41 @@
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+  log_level: warn
+
+# Memberlist lets Tempo form a ring with itself as the sole member in single-node mode
+memberlist:
+  join_members:
+    - tempo:7946
+  bind_port: 7946
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  max_block_duration: 5m
+  lifecycler:
+    ring:
+      kvstore:
+        store: memberlist
+      replication_factor: 1
+    final_sleep: 0s
+
+querier:
+  frontend_worker:
+    frontend_address: 127.0.0.1:9095
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+    pool:
+      max_workers: 100
+      queue_depth: 10000

@@ -1,0 +1,51 @@
+services:
+  roxy:
+    build: .
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: roxy
+      ROXY_BIND: 0.0.0.0:8080
+      RUST_LOG: info
+    ports:
+      - "8080:8080"
+    depends_on:
+      - otel-collector
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    volumes:
+      - ./config/otel-collector.yaml:/etc/otelcol-contrib/config.yaml
+    ports:
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    depends_on:
+      - jaeger
+      - tempo
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: -config.file=/etc/tempo.yaml
+    volumes:
+      - ./config/tempo.yaml:/etc/tempo.yaml
+    ports:
+      - "3200:3200"    # Tempo HTTP API (used by Grafana datasource)
+
+  grafana:
+    image: grafana/grafana:10.4.3
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - "3000:3000"    # Grafana UI
+    depends_on:
+      - tempo

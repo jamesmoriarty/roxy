@@ -7,7 +7,7 @@ A fast, lightweight HTTP/HTTPS proxy server written in Rust.
 - **HTTP Proxying**: Supports HTTP requests with automatic Host header resolution
 - **HTTPS Tunneling**: Implements the CONNECT method for HTTPS tunneling
 - **Configuration**: Bind address configurable via environment variables
-- **Logging**: Comprehensive debug logging support via `env_logger`
+- **Tracing**: OpenTelemetry tracing with OTLP export (Jaeger, Tempo, etc.)
 
 ## Building
 
@@ -44,6 +44,28 @@ Enable debug logging with the `RUST_LOG` environment variable:
 ```bash
 RUST_LOG=debug cargo run
 ```
+
+### Tracing
+
+Roxy exports OpenTelemetry traces via OTLP HTTP. Configure the collector endpoint:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 OTEL_SERVICE_NAME=roxy cargo run
+```
+
+**Docker Compose** starts roxy alongside Jaeger for local trace visualization:
+
+```bash
+docker compose up
+```
+
+Then open the Jaeger UI at http://localhost:16686 and send a request through the proxy:
+
+```bash
+curl -x localhost:8080 http://example.com
+```
+
+Spans are emitted for each connection (`connection`), HTTP GET (`http.get`), and CONNECT tunnel (`http.connect`).
 
 ## Usage
 
@@ -83,7 +105,8 @@ Tests verify both HTTP and HTTPS proxying functionality.
 
 ## Dependencies
 
-- `log` - Logging facade
-- `env_logger` - Environment-based logger implementation
 - `httparse` - HTTP request parser
-- `test-log` - Test logging utilities
+- `tracing` / `tracing-subscriber` - Structured logging and tracing
+- `tracing-opentelemetry` - Bridge between tracing and OpenTelemetry
+- `opentelemetry` / `opentelemetry_sdk` - OpenTelemetry SDK
+- `opentelemetry-otlp` - OTLP exporter (HTTP/proto, reqwest blocking)

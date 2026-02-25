@@ -1,0 +1,14 @@
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: true
+    editable: true
+    jsonData:
+      # Disable gRPC streaming — Tempo's HTTP port 3200 is HTTP/1.1 only.
+      # gRPC lives on port 9095; without a separate grpcEndpoint configured
+      # Grafana would try gRPC on 3200 and fail with an HTTP/2 frame error.
+      streamingEnabled: false
