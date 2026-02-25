@@ -381,14 +381,14 @@ mod tests {
     #[test]
     fn test_http() {
         let handle = std::thread::spawn(move || {
-            start("127.0.0.1:8080");
+            start("127.0.0.1:18080");
         });
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         let output = std::process::Command::new("curl")
             .args([
                 "-x",
-                "127.0.0.1:8080",
+                "127.0.0.1:18080",
                 "http://github.com/jamesmoriarty",
                 "-v",
             ])
@@ -426,14 +426,14 @@ mod tests {
     #[test]
     fn test_https() {
         let handle = std::thread::spawn(move || {
-            start("127.0.0.1:8080");
+            start("127.0.0.1:18081");
         });
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         let output = std::process::Command::new("curl")
             .args([
                 "-x",
-                "127.0.0.1:8080",
+                "127.0.0.1:18081",
                 "https://github.com/jamesmoriarty",
                 "-v",
                 "-o",
