@@ -95,6 +95,8 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
     let span = info_span!("connection", peer = ?stream.peer_addr().ok());
     let _enter = span.enter();
 
+    // RFC 2616 §5 — Request: Request-Line followed by headers and optional body.
+    // https://datatracker.ietf.org/doc/html/rfc2616#section-5
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);
 
@@ -106,10 +108,16 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
                 Ok(httparse::Status::Complete(_)) => {
                     tracing::debug!(method = ?req.method, path = ?req.path, "parsed request");
                     match req.method {
+                        // RFC 2616 §9.3 — GET method.
+                        // https://datatracker.ietf.org/doc/html/rfc2616#section-9.3
                         Some("GET") => handle_get(&mut stream, &req),
+                        // RFC 2616 §9 reserves CONNECT for tunnelling; defined fully in RFC 2817.
+                        // https://datatracker.ietf.org/doc/html/rfc2616#section-9
                         Some("CONNECT") => handle_connect(&mut stream, &req),
                         Some(method) => {
                             tracing::warn!(method, "unsupported method");
+                            // RFC 2616 §10.4.6 — 405 Method Not Allowed.
+                            // https://datatracker.ietf.org/doc/html/rfc2616#section-10.4.6
                             let _ = stream.write_all(
                                 b"HTTP/1.1 405 Method Not Allowed\r\n\r\nMethod Not Allowed",
                             );
@@ -117,6 +125,8 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
                         }
                         None => {
                             tracing::warn!("no method in request");
+                            // RFC 2616 §10.4.1 — 400 Bad Request.
+                            // https://datatracker.ietf.org/doc/html/rfc2616#section-10.4.1
                             let _ =
                                 stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\nBad Request");
                             Ok(())
@@ -157,6 +167,8 @@ fn handle_get(stream: &mut TcpStream, req: &httparse::Request) -> io::Result<()>
     );
     let _enter = span.enter();
 
+    // RFC 2616 §14.23 — Host header: required in all HTTP/1.1 requests.
+    // https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
     let host_hdr = req
         .headers
         .iter()
@@ -165,6 +177,8 @@ fn handle_get(stream: &mut TcpStream, req: &httparse::Request) -> io::Result<()>
         Some(s) if !s.is_empty() => s,
         _ => {
             tracing::error!("missing Host header");
+            // RFC 2616 §10.4.1 — 400 Bad Request.
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-10.4.1
             let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\nMissing Host header");
             return Ok(());
         }
@@ -193,6 +207,9 @@ fn handle_get(stream: &mut TcpStream, req: &httparse::Request) -> io::Result<()>
         Ok(mut remote) => {
             let _ = remote.set_nonblocking(false);
 
+            // RFC 2616 §5.1.2 — Request-URI: proxies receive an absoluteURI; forward
+            // only the abs_path to the origin server.
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-5.1.2
             let mut path = req.path.unwrap_or("/").to_string();
             if path.starts_with("http://") {
                 path = path[7..]
@@ -208,7 +225,10 @@ fn handle_get(stream: &mut TcpStream, req: &httparse::Request) -> io::Result<()>
             };
 
             let mut request_buf = format!("{} {} {}\r\n", method, path, version);
+            // RFC 2616 §4.2 — Message Headers: forward all headers except hop-by-hop headers.
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-4.2
             for header in req.headers.iter() {
+                // Proxy-Connection is a non-standard hop-by-hop header; strip it.
                 if header.name.eq_ignore_ascii_case("Proxy-Connection") {
                     continue;
                 }
@@ -216,6 +236,8 @@ fn handle_get(stream: &mut TcpStream, req: &httparse::Request) -> io::Result<()>
                     request_buf.push_str(&format!("{}: {}\r\n", header.name, val));
                 }
             }
+            // RFC 2616 §14.10 — Connection: close signals no persistent connection.
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-14.10
             request_buf.push_str("Connection: close\r\n\r\n");
 
             if let Err(e) = remote.write_all(request_buf.as_bytes()) {
@@ -251,6 +273,8 @@ fn handle_get(stream: &mut TcpStream, req: &httparse::Request) -> io::Result<()>
         }
         Err(e) => {
             tracing::error!(error = %e, %target, "upstream connection failed");
+            // RFC 2616 §10.5.3 — 502 Bad Gateway.
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-10.5.3
             let _ = stream.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\nBad Gateway");
             Err(e)
         }
@@ -293,6 +317,9 @@ fn handle_connect(stream: &mut TcpStream, req: &httparse::Request) -> io::Result
         Ok(remote) => {
             tracing::info!("tunnel established");
 
+            // RFC 2616 §10.2.1 — 200 OK; the "Connection Established" reason phrase is
+            // conventional for CONNECT tunnels (defined in RFC 2817 §5).
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-10.2.1
             if let Err(e) = stream.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n") {
                 tracing::error!(error = %e, "write CONNECT response failed");
                 return Err(e);
@@ -326,6 +353,8 @@ fn handle_connect(stream: &mut TcpStream, req: &httparse::Request) -> io::Result
         }
         Err(e) => {
             tracing::error!(error = %e, %target, "tunnel connection failed");
+            // RFC 2616 §10.5.3 — 502 Bad Gateway.
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-10.5.3
             let _ = stream.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\nBad Gateway");
             Err(e)
         }
@@ -333,6 +362,9 @@ fn handle_connect(stream: &mut TcpStream, req: &httparse::Request) -> io::Result
 }
 
 /// Extract the Host header value, returning a 400 error if absent.
+///
+/// RFC 2616 §14.23 — Host header.
+/// https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
 fn host_header(req: &httparse::Request) -> io::Result<String> {
     req.headers
         .iter()
